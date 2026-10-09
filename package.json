@@ -1,0 +1,17 @@
+{
+  "name": "mediroute-officer",
+  "version": "1.0.0",
+  "description": "MediRoute Dedicated Officer Alert Server & Traffic Clearance Dashboard",
+  "private": true,
+  "scripts": {
+    "install:all": "cd server && npm install && cd ../client && npm install",
+    "dev": "concurrently -n officer-srv,officer-ui -c blue,yellow \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "test:server": "cd server && npm test",
+    "build:client": "cd client && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

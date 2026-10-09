@@ -1,0 +1,19 @@
+{
+  "name": "MediRoute Officer Alert & Clearance Dashboard",
+  "short_name": "OfficerAlert",
+  "description": "Real-time Kerala Traffic Police Corridor Clearance & Emergency Alert System",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#070d1e",
+  "theme_color": "#070d1e",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
