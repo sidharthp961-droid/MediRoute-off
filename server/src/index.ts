@@ -174,6 +174,9 @@ app.post('/api/v1/emergency-dispatch', requireServerAuthentication, (req, res) =
     },
   });
 
+  // Sync junctions to MediRoute Core Server
+  coreBridge.syncJunctions(trip.tripId, trip.junctions);
+
   // Emit to all connected officer screens
   io.emit('officer:alert', {
     trip,
@@ -263,6 +266,9 @@ app.post('/api/v1/junctions/:tripId/:junctionId/status', (req, res) => {
     updatedBy: officerName || 'Traffic Officer',
   });
 
+  // Synchronize junction update back to MediRoute Core Server
+  coreBridge.notifyJunctionStatus(tripId, result.junction, officerName || 'Traffic Officer');
+
   return res.json({ success: true, junction: result.junction });
 });
 
@@ -286,6 +292,9 @@ app.post('/api/v1/trips/:tripId/acknowledge', (req, res) => {
     acknowledgedBy: officerData.name,
     acknowledgedAt: updated.acknowledgedAt || Date.now(),
   });
+
+  // Synchronize trip acknowledgement back to MediRoute Core Server
+  coreBridge.notifyTripAcknowledged(tripId, officerData.name, updated.acknowledgedAt || Date.now());
 
   return res.json({
     success: true,

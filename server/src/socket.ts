@@ -105,6 +105,9 @@ export function setupOfficerSocketHandlers(io: OfficerIOServer): void {
         updatedBy: officerData.name,
       });
 
+      // Synchronize junction update back to MediRoute Core Server
+      coreBridge.notifyJunctionStatus(tripId, result.junction, officerData.name);
+
       console.log(
         `🚦 [Junction Clearance] ${result.junction.name} -> ${status} by ${officerData.name}`,
       );
@@ -129,6 +132,9 @@ export function setupOfficerSocketHandlers(io: OfficerIOServer): void {
           acknowledgedBy: officerData.name,
           acknowledgedAt: updated.acknowledgedAt || Date.now(),
         });
+
+        // Synchronize trip acknowledgement back to MediRoute Core Server
+        coreBridge.notifyTripAcknowledged(tripId, officerData.name, updated.acknowledgedAt || Date.now());
         console.log(`[Officer Alert] Trip ${tripId} acknowledged by ${officerData.name}`);
       }
     });
