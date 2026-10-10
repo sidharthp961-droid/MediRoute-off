@@ -28,7 +28,9 @@ export function setupOfficerSocketHandlers(io: OfficerIOServer): void {
         trip: activeTrip,
         isNew: false,
         alarmTrigger: false, // Don't blast siren on page refresh
-        alertMessage: `Active corridor in progress: ${activeTrip.destinationName}`,
+        alertMessage: activeTrip.acknowledged
+          ? `Active corridor in progress (Acknowledged by ${activeTrip.acknowledgedBy || 'Officer'}): ${activeTrip.destinationName}`
+          : `Active corridor in progress: ${activeTrip.destinationName}`,
       });
     }
 
@@ -110,16 +112,25 @@ export function setupOfficerSocketHandlers(io: OfficerIOServer): void {
 
     // ── Trip Acknowledged ──
     socket.on('trip:acknowledge', (data) => {
-      const { tripId, officerId } = data || {};
-      const officer = officerState.connectedOfficerSockets.get(socket.id);
+      const { tripId, officerId, officerName } = data || {};
+      if (!tripId) return;
 
-      officerState.addAuditLog({
-        tripId,
-        action: 'TRIP_ALERT_ACKNOWLEDGED',
-        actorId: officerId || officer?.id || 'unknown',
-        actorName: officer?.name || 'On-Duty Officer',
-        details: { socketId: socket.id },
-      });
+      const registeredOfficer = officerState.connectedOfficerSockets.get(socket.id);
+      const officerData = {
+        id: officerId || registeredOfficer?.id || 'officer-anon',
+        name: officerName || registeredOfficer?.name || 'On-Duty Officer',
+      };
+
+      const updated = officerState.acknowledgeTrip(tripId, officerData);
+      if (updated) {
+        // Broadcast acknowledgement to ALL connected sockets
+        io.emit('trip:acknowledged', {
+          tripId,
+          acknowledgedBy: officerData.name,
+          acknowledgedAt: updated.acknowledgedAt || Date.now(),
+        });
+        console.log(`[Officer Alert] Trip ${tripId} acknowledged by ${officerData.name}`);
+      }
     });
 
     // ── Disconnect ──

@@ -10,7 +10,13 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0',
     port: 5174,
-    host: true, // Listen on all network interfaces for phone/PWA LAN access
+    strictPort: true,
+  },
+  preview: {
+    host: '0.0.0.0',
+    port: 5174,
+    strictPort: true,
   },
 });

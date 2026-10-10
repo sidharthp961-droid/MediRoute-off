@@ -4,9 +4,9 @@
   "description": "MediRoute Officer Alert Dashboard & Traffic Clearance PWA",
   "type": "module",
   "scripts": {
-    "dev": "vite --host --port 5174",
+    "dev": "vite --host 0.0.0.0 --port 5174 --strictPort",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host --port 5174"
+    "preview": "vite preview --host 0.0.0.0 --port 5174 --strictPort"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

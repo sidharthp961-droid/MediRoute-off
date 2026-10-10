@@ -129,9 +129,9 @@ app.post('/api/v1/emergency-dispatch', requireServerAuthentication, (req, res) =
 
   const sig = alertDeduplicator.createSignature(data.tripId, data.vehicleId);
   const isDuplicate = alertDeduplicator.isDuplicateEvent(sig);
-  const shouldAlarm = alertDeduplicator.shouldTriggerAudibleAlarm(data.tripId);
-
   const existing = officerState.getTrip(data.tripId);
+  const isAlreadyAcknowledged = !!existing?.acknowledged;
+  const shouldAlarm = !isAlreadyAcknowledged && alertDeduplicator.shouldTriggerAudibleAlarm(data.tripId);
   const junctions =
     existing?.junctions ||
     buildJunctionTasksForTrip(data.tripId, data.origin, data.routeCoordinates);
@@ -154,6 +154,9 @@ app.post('/api/v1/emergency-dispatch', requireServerAuthentication, (req, res) =
     updatedAt: Date.now(),
     junctions,
     isSimulated: !!data.isSimulated,
+    acknowledged: existing?.acknowledged || false,
+    acknowledgedBy: existing?.acknowledgedBy,
+    acknowledgedAt: existing?.acknowledgedAt,
   };
 
   officerState.addOrUpdateTrip(trip);
@@ -263,6 +266,36 @@ app.post('/api/v1/junctions/:tripId/:junctionId/status', (req, res) => {
   return res.json({ success: true, junction: result.junction });
 });
 
+// ── REST Trip Acknowledge Endpoint ──
+app.post('/api/v1/trips/:tripId/acknowledge', (req, res) => {
+  const { tripId } = req.params;
+  const { officerId, officerName } = req.body || {};
+
+  const officerData = {
+    id: officerId || 'rest-officer',
+    name: officerName || 'On-Duty Officer',
+  };
+
+  const updated = officerState.acknowledgeTrip(tripId, officerData);
+  if (!updated) {
+    return res.status(404).json({ error: 'Trip not found' });
+  }
+
+  io.emit('trip:acknowledged', {
+    tripId,
+    acknowledgedBy: officerData.name,
+    acknowledgedAt: updated.acknowledgedAt || Date.now(),
+  });
+
+  return res.json({
+    success: true,
+    tripId,
+    acknowledged: true,
+    acknowledgedBy: officerData.name,
+    acknowledgedAt: updated.acknowledgedAt,
+  });
+});
+
 // ── Audit Logs ──
 app.get('/api/v1/audit-logs', (req, res) => {
   const tripId = req.query.tripId as string | undefined;
@@ -270,21 +303,28 @@ app.get('/api/v1/audit-logs', (req, res) => {
   return res.json({ logs });
 });
 
-// Start Server and Core Bridge
-server.listen(PORT, '0.0.0.0', () => {
-  console.log('');
-  console.log('  ════════════════════════════════════════════════════════════');
-  console.log('  🛡️   MEDIROUTE OFFICER ALERT & CLEARANCE SERVER   🛡️');
-  console.log('  ════════════════════════════════════════════════════════════');
-  console.log(`  ► Local:   http://localhost:${PORT}`);
-  console.log(`  ► Network: http://0.0.0.0:${PORT}`);
-  console.log(`  ► Core:    ${coreBridge.getStatus().coreUrl}`);
-  console.log('  ► Socket.IO & REST endpoints ready for Traffic Units');
-  console.log('  ════════════════════════════════════════════════════════════');
-  console.log('');
+// Start Server and Core Bridge if not in automated test mode
+const isTestMode =
+  process.env.NODE_ENV === 'test' ||
+  process.env.IS_TEST_RUNNER === 'true' ||
+  process.argv.some((arg) => arg.includes('test'));
 
-  // Start background bridge connection to Core Server
-  coreBridge.connect();
-});
+if (!isTestMode) {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log('');
+    console.log('  ════════════════════════════════════════════════════════════');
+    console.log('  🛡️   MEDIROUTE OFFICER ALERT & CLEARANCE SERVER   🛡️');
+    console.log('  ════════════════════════════════════════════════════════════');
+    console.log(`  ► Local:   http://localhost:${PORT}`);
+    console.log(`  ► Network: http://0.0.0.0:${PORT}`);
+    console.log(`  ► Core:    ${coreBridge.getStatus().coreUrl}`);
+    console.log('  ► Socket.IO & REST endpoints ready for Traffic Units');
+    console.log('  ════════════════════════════════════════════════════════════');
+    console.log('');
+
+    // Start background bridge connection to Core Server
+    coreBridge.connect();
+  });
+}
 
 export { app, server };

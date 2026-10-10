@@ -48,6 +48,9 @@ export interface EmergencyTrip {
   updatedAt: number;
   junctions: JunctionTask[];
   isSimulated: boolean;
+  acknowledged?: boolean;
+  acknowledgedBy?: string;
+  acknowledgedAt?: number;
 }
 
 export interface OfficerUser {
@@ -93,7 +96,8 @@ export interface OfficerClientToServerEvents {
 
   'trip:acknowledge': (data: {
     tripId: string;
-    officerId: string;
+    officerId?: string;
+    officerName?: string;
   }) => void;
 }
 
@@ -117,6 +121,12 @@ export interface OfficerServerToClientEvents {
     tripId: string;
     status: TripStatus;
     reason?: string;
+  }) => void;
+
+  'trip:acknowledged': (data: {
+    tripId: string;
+    acknowledgedBy: string;
+    acknowledgedAt: number;
   }) => void;
 
   'junction:status-changed': (data: {

@@ -1,6 +1,5 @@
-// ══════════════════════════════════════════════════════════════
-// MediRoute Officer Alert Server — Test Suite
-// ══════════════════════════════════════════════════════════════
+process.env.IS_TEST_RUNNER = 'true';
+process.env.NODE_ENV = 'test';
 
 import http from 'http';
 import { app, server } from '../src/index';

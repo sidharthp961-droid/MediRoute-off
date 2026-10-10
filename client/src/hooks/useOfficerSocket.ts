@@ -16,10 +16,22 @@ const DEFAULT_OFFICER: OfficerUser = {
   role: 'officer',
 };
 
-export function useOfficerSocket(onAlarmTrigger?: () => void) {
+export function useOfficerSocket(
+  onAlarmTrigger?: (tripId: string) => void,
+  onAlarmStop?: (tripId?: string) => void,
+) {
   const [connected, setConnected] = useState(false);
   const [activeTrip, setActiveTrip] = useState<EmergencyTrip | null>(null);
   const [junctions, setJunctions] = useState<JunctionTask[]>([]);
+  const [acknowledgedTripIds, setAcknowledgedTripIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('mediroute_acknowledged_trips');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
   const [officer, setOfficerState] = useState<OfficerUser>(() => {
     try {
       const saved = localStorage.getItem('mediroute_officer_user');
@@ -28,6 +40,7 @@ export function useOfficerSocket(onAlarmTrigger?: () => void) {
       return DEFAULT_OFFICER;
     }
   });
+
   const [bridgeStatus, setBridgeStatus] = useState({
     connectedToCore: false,
     coreUrl: 'http://localhost:3001',
@@ -38,6 +51,8 @@ export function useOfficerSocket(onAlarmTrigger?: () => void) {
   const socketRef = useRef<Socket | null>(null);
   const onAlarmTriggerRef = useRef(onAlarmTrigger);
   onAlarmTriggerRef.current = onAlarmTrigger;
+  const onAlarmStopRef = useRef(onAlarmStop);
+  onAlarmStopRef.current = onAlarmStop;
 
   // Determine server URL dynamically: same host, port 3002
   const getServerUrl = () => {
@@ -80,15 +95,54 @@ export function useOfficerSocket(onAlarmTrigger?: () => void) {
     socket.on('officer:alert', (data: any) => {
       console.log('🚨 [OfficerSocket] Alert received:', data);
       if (data?.trip) {
-        setActiveTrip(data.trip);
-        setJunctions(data.trip.junctions || []);
+        setAcknowledgedTripIds((prev) => {
+          const isAlreadyAck = data.trip.acknowledged || prev.has(data.trip.tripId);
+          const mergedTrip: EmergencyTrip = {
+            ...data.trip,
+            acknowledged: isAlreadyAck,
+            acknowledgedBy: data.trip.acknowledgedBy || (isAlreadyAck ? 'Officer' : undefined),
+          };
+          setActiveTrip(mergedTrip);
+          setJunctions(data.trip.junctions || []);
+
+          if (data?.alarmTrigger && !isAlreadyAck) {
+            onAlarmTriggerRef.current?.(data.trip.tripId);
+          } else if (isAlreadyAck) {
+            onAlarmStopRef.current?.(data.trip.tripId);
+          }
+          return prev;
+        });
       }
       if (data?.alertMessage) {
         setLastAlertMessage(data.alertMessage);
       }
-      if (data?.alarmTrigger && onAlarmTriggerRef.current) {
-        onAlarmTriggerRef.current();
-      }
+    });
+
+    socket.on('trip:acknowledged', (data: { tripId: string; acknowledgedBy: string; acknowledgedAt: number }) => {
+      console.log('🛡️ [OfficerSocket] Trip acknowledged broadcast received:', data);
+      setAcknowledgedTripIds((prev) => {
+        const updated = new Set(prev);
+        updated.add(data.tripId);
+        try {
+          localStorage.setItem('mediroute_acknowledged_trips', JSON.stringify(Array.from(updated)));
+        } catch {}
+        return updated;
+      });
+
+      setActiveTrip((prev) =>
+        prev && prev.tripId === data.tripId
+          ? {
+              ...prev,
+              acknowledged: true,
+              acknowledgedBy: data.acknowledgedBy,
+              acknowledgedAt: data.acknowledgedAt,
+            }
+          : prev,
+      );
+
+      // Stop alarm immediately upon synchronized network acknowledgement
+      onAlarmStopRef.current?.(data.tripId);
+      setLastAlertMessage(`Corridor ${data.tripId} acknowledged by ${data.acknowledgedBy}`);
     });
 
     socket.on('trip:location-update', (data: any) => {
@@ -113,6 +167,8 @@ export function useOfficerSocket(onAlarmTrigger?: () => void) {
     socket.on('trip:status-update', (data: any) => {
       setActiveTrip((prev) => (prev && prev.tripId === data.tripId ? { ...prev, status: data.status } : prev));
       if (data.status === 'COMPLETED' || data.status === 'CANCELLED') {
+        // Lifecycle rule: stop alarm when emergency is completed or cancelled
+        onAlarmStopRef.current?.(data.tripId);
         setLastAlertMessage(`Emergency corridor ${data.status.toLowerCase()}`);
       }
     });
@@ -180,13 +236,49 @@ export function useOfficerSocket(onAlarmTrigger?: () => void) {
     }
   }, []);
 
-  const acknowledgeTrip = useCallback(() => {
-    if (!activeTrip || !socketRef.current) return;
-    socketRef.current.emit('trip:acknowledge', {
-      tripId: activeTrip.tripId,
-      officerId: officer.id,
+  const acknowledgeTrip = useCallback((targetTripId?: string) => {
+    const tripToAck = targetTripId || activeTrip?.tripId;
+    if (!tripToAck) return;
+
+    // 1. Stop local audio alarm immediately
+    onAlarmStopRef.current?.(tripToAck);
+
+    // 2. Optimistically mark acknowledged in local set and state
+    setAcknowledgedTripIds((prev) => {
+      const updated = new Set(prev);
+      updated.add(tripToAck);
+      try {
+        localStorage.setItem('mediroute_acknowledged_trips', JSON.stringify(Array.from(updated)));
+      } catch {}
+      return updated;
     });
-  }, [activeTrip, officer]);
+
+    setActiveTrip((prev) =>
+      prev && prev.tripId === tripToAck
+        ? {
+            ...prev,
+            acknowledged: true,
+            acknowledgedBy: officer.name,
+            acknowledgedAt: Date.now(),
+          }
+        : prev,
+    );
+
+    // 3. Emit acknowledgement to server to broadcast to all dashboards and write audit log
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('trip:acknowledge', {
+        tripId: tripToAck,
+        officerId: officer.id,
+        officerName: officer.name,
+      });
+    }
+  }, [activeTrip?.tripId, officer.id, officer.name]);
+
+  const isTripAcknowledged = useCallback(
+    (tripId: string) =>
+      acknowledgedTripIds.has(tripId) || (activeTrip?.tripId === tripId && !!activeTrip?.acknowledged),
+    [acknowledgedTripIds, activeTrip],
+  );
 
   // Demo dispatch trigger for evaluation / offline presentation
   const triggerDemoTrip = useCallback(async () => {
@@ -228,6 +320,8 @@ export function useOfficerSocket(onAlarmTrigger?: () => void) {
     setOfficer,
     bridgeStatus,
     lastAlertMessage,
+    acknowledgedTripIds,
+    isTripAcknowledged,
     updateJunctionStatus,
     acknowledgeTrip,
     triggerDemoTrip,

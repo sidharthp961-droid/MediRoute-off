@@ -121,13 +121,15 @@ export class CoreServerBridge {
 
     // Check duplicate event packet
     const isDup = alertDeduplicator.isDuplicateEvent(sig);
-    const shouldAlarm = alertDeduplicator.shouldTriggerAudibleAlarm(tripId);
-
     const existingTrip = officerState.getTrip(tripId);
+
     if (existingTrip && existingTrip.status === 'ACTIVE' && isDup) {
       // Duplicate packet within cooldown; ignore repeat alarm
       return;
     }
+
+    const isAlreadyAcknowledged = !!existingTrip?.acknowledged;
+    const shouldAlarm = !isAlreadyAcknowledged && alertDeduplicator.shouldTriggerAudibleAlarm(tripId);
 
     const destCoords: Coordinates = session.destination || { lat: 9.967, lng: 76.319 }; // Default to Vyttila/Ernakulam hub if unspecified
     const junctions = buildJunctionTasksForTrip(tripId, session.origin);
@@ -150,6 +152,7 @@ export class CoreServerBridge {
       updatedAt: Date.now(),
       junctions,
       isSimulated: false,
+      acknowledged: false,
     };
 
     officerState.addOrUpdateTrip(trip);

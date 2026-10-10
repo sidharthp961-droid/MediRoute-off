@@ -44,6 +44,9 @@ export interface EmergencyTrip {
   updatedAt: number;
   junctions: JunctionTask[];
   isSimulated: boolean;
+  acknowledged?: boolean;
+  acknowledgedBy?: string;
+  acknowledgedAt?: number;
 }
 
 export interface OfficerUser {

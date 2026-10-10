@@ -20,7 +20,9 @@ export function App() {
   // Audio siren hook
   const {
     isPlaying: isAlarmPlaying,
+    activeTripId: alarmTripId,
     isMuted,
+    autoplayBlocked,
     startAlarm,
     stopAlarm,
     testAlarm,
@@ -38,10 +40,16 @@ export function App() {
     updateJunctionStatus,
     acknowledgeTrip,
     triggerDemoTrip,
-  } = useOfficerSocket(() => {
-    // Fired when server sends new alert with alarmTrigger = true
-    startAlarm();
-  });
+  } = useOfficerSocket(
+    (tripId) => {
+      // Fired when server sends new alert with alarmTrigger = true
+      startAlarm(tripId);
+    },
+    (tripId) => {
+      // Fired when alert acknowledged or status completed/cancelled
+      stopAlarm(tripId);
+    },
+  );
 
   const handleStartDemoTrip = async () => {
     setDemoLoading(true);
@@ -69,11 +77,13 @@ export function App() {
         <AlarmBanner
           trip={activeTrip}
           isPlaying={isAlarmPlaying}
+          activeTripId={alarmTripId}
           isMuted={isMuted}
+          autoplayBlocked={autoplayBlocked}
           onTestAlarm={() => testAlarm(2500)}
           onToggleMute={toggleMute}
-          onSilenceAlarm={stopAlarm}
-          onAcknowledge={acknowledgeTrip}
+          onSilenceAlarm={(tripId) => stopAlarm(tripId)}
+          onAcknowledge={(tripId) => acknowledgeTrip(tripId)}
         />
 
         {/* Demo Controls Strip & PWA Notice */}

@@ -2,58 +2,101 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 
 export function useAudioAlarm() {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [activeTripId, setActiveTripId] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+
   const audioCtxRef = useRef<AudioContext | null>(null);
   const oscillatorRef = useRef<OscillatorNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const lfoRef = useRef<OscillatorNode | null>(null);
   const lfoGainRef = useRef<GainNode | null>(null);
+  const activeTripIdRef = useRef<string | null>(null);
+  const testTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize or resume AudioContext
+  // Initialize or resume AudioContext safely
   const getAudioContext = useCallback(() => {
-    if (!audioCtxRef.current) {
-      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtxClass) {
-        audioCtxRef.current = new AudioCtxClass();
+    try {
+      if (!audioCtxRef.current) {
+        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtxClass) {
+          audioCtxRef.current = new AudioCtxClass();
+        }
       }
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().then(() => {
+          setAutoplayBlocked(false);
+        }).catch((err) => {
+          console.warn('[AudioAlarm] Autoplay resume pending user gesture:', err);
+          setAutoplayBlocked(true);
+        });
+      }
+      return audioCtxRef.current;
+    } catch (err) {
+      console.warn('[AudioAlarm] AudioContext initialization failed:', err);
+      return null;
     }
-    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume();
-    }
-    return audioCtxRef.current;
   }, []);
 
-  const stopAlarm = useCallback(() => {
+  const stopAlarm = useCallback((targetTripId?: string) => {
+    // If targetTripId specified, only stop if it matches the currently ringing trip
+    if (targetTripId && activeTripIdRef.current && activeTripIdRef.current !== targetTripId) {
+      return;
+    }
+
+    // Clear any test tone timeout
+    if (testTimeoutRef.current) {
+      clearTimeout(testTimeoutRef.current);
+      testTimeoutRef.current = null;
+    }
+
     try {
       if (oscillatorRef.current) {
-        oscillatorRef.current.stop();
+        try {
+          oscillatorRef.current.stop();
+        } catch {}
         oscillatorRef.current.disconnect();
         oscillatorRef.current = null;
       }
       if (lfoRef.current) {
-        lfoRef.current.stop();
+        try {
+          lfoRef.current.stop();
+        } catch {}
         lfoRef.current.disconnect();
         lfoRef.current = null;
+      }
+      if (lfoGainRef.current) {
+        lfoGainRef.current.disconnect();
+        lfoGainRef.current = null;
       }
       if (gainNodeRef.current) {
         gainNodeRef.current.disconnect();
         gainNodeRef.current = null;
       }
-    } catch {
-      // ignore cleanup errors
+    } catch (err) {
+      console.warn('[AudioAlarm] Node cleanup error:', err);
     }
+
+    activeTripIdRef.current = null;
+    setActiveTripId(null);
     setIsPlaying(false);
   }, []);
 
-  const startAlarm = useCallback(() => {
+  const startAlarm = useCallback((tripId?: string) => {
     if (isMuted) return;
+
+    // Stop any existing playing tone before starting a new one
+    stopAlarm();
+
     const ctx = getAudioContext();
     if (!ctx) return;
 
-    stopAlarm(); // Stop any existing nodes
+    const assignedId = tripId || 'default-alert';
+    activeTripIdRef.current = assignedId;
+    setActiveTripId(assignedId);
 
     try {
-      // Main Tone Oscillator (European/Indian Police Siren Warble ~700-1100Hz)
+      // Main Tone Oscillator (Indian/European Emergency Siren Warble ~700-1100Hz)
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
@@ -85,8 +128,10 @@ export function useAudioAlarm() {
       gainNodeRef.current = gain;
 
       setIsPlaying(true);
+      setAutoplayBlocked(false);
     } catch (err) {
       console.warn('[AudioAlarm] Could not start synthesized alarm:', err);
+      stopAlarm();
     }
   }, [getAudioContext, isMuted, stopAlarm]);
 
@@ -103,21 +148,27 @@ export function useAudioAlarm() {
 
         osc.type = 'sine';
         osc.frequency.setValueAtTime(880, ctx.currentTime);
-        // Beep sequence
         gain.gain.setValueAtTime(0.2, ctx.currentTime);
 
         osc.connect(gain);
         gain.connect(ctx.destination);
 
         osc.start();
+        setIsPlaying(true);
+        activeTripIdRef.current = 'test-tone';
+        setActiveTripId('test-tone');
 
-        setTimeout(() => {
+        testTimeoutRef.current = setTimeout(() => {
           try {
             osc.stop();
             osc.disconnect();
-          } catch {
-            // ignore
+          } catch {}
+          if (activeTripIdRef.current === 'test-tone') {
+            activeTripIdRef.current = null;
+            setActiveTripId(null);
+            setIsPlaying(false);
           }
+          testTimeoutRef.current = null;
         }, durationMs);
       } catch (err) {
         console.warn('[AudioAlarm] Test sound failed:', err);
@@ -136,6 +187,7 @@ export function useAudioAlarm() {
     });
   }, [stopAlarm]);
 
+  // Teardown on unmount
   useEffect(() => {
     return () => {
       stopAlarm();
@@ -144,7 +196,9 @@ export function useAudioAlarm() {
 
   return {
     isPlaying,
+    activeTripId,
     isMuted,
+    autoplayBlocked,
     startAlarm,
     stopAlarm,
     testAlarm,

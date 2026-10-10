@@ -62,6 +62,31 @@ class OfficerServerState {
     return trip;
   }
 
+  acknowledgeTrip(
+    tripId: string,
+    officer: { id: string; name: string },
+  ): EmergencyTrip | undefined {
+    const trip = this.activeTrips.get(tripId);
+    if (!trip) return undefined;
+
+    trip.acknowledged = true;
+    trip.acknowledgedBy = officer.name;
+    trip.acknowledgedAt = Date.now();
+    trip.updatedAt = Date.now();
+
+    this.addAuditLog({
+      tripId,
+      action: 'TRIP_ALERT_ACKNOWLEDGED',
+      actorId: officer.id,
+      actorName: officer.name,
+      details: {
+        acknowledgedAt: trip.acknowledgedAt,
+      },
+    });
+
+    return trip;
+  }
+
   // ── Junction Clearance Coordination ──
 
   updateJunctionStatus(
