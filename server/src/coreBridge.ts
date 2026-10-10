@@ -1,12 +1,9 @@
-// ══════════════════════════════════════════════════════════════
-// MediRoute Officer Alert Server — Resilient Core Server Bridge
-// ══════════════════════════════════════════════════════════════
-
+// ─── MediRoute Officer Alert Server — Resilient Core Server Bridge ───
 import { io as ioClient, Socket } from 'socket.io-client';
 import { officerState } from './state';
 import { alertDeduplicator } from './deduplication';
 import { buildJunctionTasksForTrip } from './junctions';
-import { EmergencyTrip, Coordinates } from './types';
+import { EmergencyTrip, Coordinates, JunctionTask } from './types';
 import { Server } from 'socket.io';
 import { OfficerClientToServerEvents, OfficerServerToClientEvents } from './types';
 
@@ -51,11 +48,17 @@ export class CoreServerBridge {
       this.lastPing = Date.now();
       console.log('✅ [Core Bridge] Successfully connected to MediRoute Core Server');
 
-      // Register this socket with core server as an authorized monitor/officer service
+      // Register this socket with core server as an authorized officer-bridge link
       this.socket?.emit('vehicle:register', {
-        role: 'monitor',
+        role: 'officer-bridge',
         label: 'Officer Alert Server Link',
       } as any);
+
+      // If active trip exists, sync its junctions immediately upon connection/reconnection
+      const activeTrip = officerState.getActiveTrip();
+      if (activeTrip && activeTrip.junctions && activeTrip.junctions.length > 0) {
+        this.syncJunctions(activeTrip.tripId, activeTrip.junctions);
+      }
 
       this.broadcastBridgeStatus();
     });
@@ -68,7 +71,6 @@ export class CoreServerBridge {
 
     this.socket.on('connect_error', (err) => {
       this.isConnected = false;
-      // Core server may still be booting; log cleanly without crashing
       console.warn(`[Core Bridge] Connection attempt to ${this.coreUrl} pending: ${err.message}`);
       this.broadcastBridgeStatus();
     });
@@ -108,6 +110,52 @@ export class CoreServerBridge {
   }
 
   /**
+   * Synchronizes active junction tasks with MediRoute Core Server.
+   */
+  syncJunctions(tripId: string, junctions: JunctionTask[]): void {
+    if (this.socket && this.isConnected) {
+      this.socket.emit('corridor:junctions-sync', {
+        tripId,
+        junctions,
+      });
+      console.log(`[Core Bridge] Synced ${junctions.length} junctions to Core Server for ${tripId}`);
+    }
+  }
+
+  /**
+   * Forwards junction clearance status changes to MediRoute Core Server.
+   */
+  notifyJunctionStatus(tripId: string, junction: JunctionTask, updatedBy: string): void {
+    if (this.socket && this.isConnected) {
+      this.socket.emit('junction:update-status', {
+        tripId,
+        junctionId: junction.id,
+        junction,
+        status: junction.status,
+        officerId: junction.assignedOfficerId,
+        officerName: updatedBy,
+        station: junction.assignedOfficerStation,
+        notes: junction.notes,
+      });
+      console.log(`[Core Bridge] Forwarded junction update to Core Server: ${junction.name} -> ${junction.status} (${updatedBy})`);
+    }
+  }
+
+  /**
+   * Forwards emergency corridor trip acknowledgement to MediRoute Core Server.
+   */
+  notifyTripAcknowledged(tripId: string, acknowledgedBy: string, acknowledgedAt: number): void {
+    if (this.socket && this.isConnected) {
+      this.socket.emit('trip:acknowledged', {
+        tripId,
+        acknowledgedBy,
+        acknowledgedAt,
+      });
+      console.log(`[Core Bridge] Forwarded trip acknowledgement to Core Server: ${tripId} by ${acknowledgedBy}`);
+    }
+  }
+
+  /**
    * Translates incoming Core Server session into a rich emergency trip for officers.
    */
   handleActiveEmergencySession(session: {
@@ -131,7 +179,7 @@ export class CoreServerBridge {
     const isAlreadyAcknowledged = !!existingTrip?.acknowledged;
     const shouldAlarm = !isAlreadyAcknowledged && alertDeduplicator.shouldTriggerAudibleAlarm(tripId);
 
-    const destCoords: Coordinates = session.destination || { lat: 9.967, lng: 76.319 }; // Default to Vyttila/Ernakulam hub if unspecified
+    const destCoords: Coordinates = session.destination || { lat: 9.967, lng: 76.319 };
     const junctions = buildJunctionTasksForTrip(tripId, session.origin);
 
     const trip: EmergencyTrip = existingTrip || {
@@ -178,6 +226,9 @@ export class CoreServerBridge {
         alertMessage: `🚨 CRITICAL EMERGENCY CORRIDOR: Ambulance #${session.vehicleId.slice(0, 6)} en-route. Clearance required at ${junctions.length} junctions.`,
       });
     }
+
+    // Immediately sync the generated junctions to Core Server
+    this.syncJunctions(tripId, junctions);
   }
 
   private handleEndedEmergencySession(sessionId: string, status: 'COMPLETED' | 'CANCELLED'): void {
