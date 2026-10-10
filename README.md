@@ -1,5 +1,7 @@
 # MediRoute — Officer Alert Server & Traffic Clearance System
 
+MediRoute is a smart emergency vehicle communication platform that helps private vehicles transporting patients alert nearby road users through real-time location tracking, proximity-based notifications, hospital routing, and emergency coordination.
+
 > **Kerala Police Emergency Corridor Clearance & Officer Alert Console**  
 > Hackathon System Extension for MediRoute
 
